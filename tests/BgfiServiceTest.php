@@ -54,4 +54,24 @@ class BgfiServiceTest extends TestCase
 
         $this->assertSame(['status' => 'ok'], $response);
     }
+
+    public function test_it_throws_on_bgfi_error_code_even_with_http_200(): void
+    {
+        $service = new BgfiService([
+            'base_url'        => 'https://example.test',
+            'consumer_id'     => 'id',
+            'consumer_secret' => 'secret',
+            'login'           => 'login',
+            'password'        => 'pass',
+        ]);
+
+        Http::fake([
+            'https://example.test/api/rakakash/oauth' => Http::response(['code' => 4008, 'message' => 'Application Corrompue'], 200),
+        ]);
+
+        $this->expectException(\Mecxer713\BgfiPayment\Exceptions\BgfiApiException::class);
+        $this->expectExceptionMessage('Application Corrompue');
+
+        $service->getToken();
+    }
 }

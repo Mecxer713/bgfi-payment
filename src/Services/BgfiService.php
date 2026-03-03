@@ -83,10 +83,18 @@ class BgfiService
         return $path;
     }
 
-    protected function throwIfFailed(Response $response, string $context): void
+    protected function assertSuccess(Response $response, string $context): void
     {
         if ($response->failed()) {
             throw new BgfiApiException($context . " (status {$response->status()}): " . $response->body());
+        }
+
+        $code = $response->json('code');
+        $message = $response->json('message');
+
+        // BGFI sometimes returns HTTP 200 with error codes (e.g., 4008)
+        if ($code !== null && (int) $code !== 2000) {
+            throw new BgfiApiException($context . " (code {$code}): " . ($message ?? $response->body()));
         }
     }
 
@@ -102,12 +110,10 @@ class BgfiService
                     'consumersecret' => $this->config['consumer_secret'],
                 ]);
 
-            if ($response->failed()) {
-                throw BgfiApiException::authFailed($response->body(), $response->status());
-            }
+            $this->assertSuccess($response, 'Authentication failed');
 
             $token = $response->json('token') ?? $response->json('access_token');
-
+            
             if (!$token) {
                 throw BgfiApiException::authFailed('Token not present in response', $response->status());
             }
@@ -127,7 +133,7 @@ class BgfiService
             ->withToken($this->getToken())
             ->post($this->baseUrl('api/rakakash/checkaccount'), $payload);
 
-        $this->throwIfFailed($response, 'Account verification failed');
+        $this->assertSuccess($response, 'Account verification failed');
 
         return $response->json();
     }
@@ -142,7 +148,7 @@ class BgfiService
                 'montant'                     => $amount,
             ]);
 
-        $this->throwIfFailed($response, 'Deposit request failed');
+        $this->assertSuccess($response, 'Deposit request failed');
 
         return $response->json();
     }
@@ -158,7 +164,7 @@ class BgfiService
             'return_url'      => $data['return_url'] ?? $this->config['return_url'] ?? null,
         ];
 
-        $payload = array_filter($payload, fn ($value) => !is_null($value));
+        $payload = array_filter($payload, fn($value) => !is_null($value));
 
         $response = $this->client()
             ->withToken($this->getToken())
@@ -167,7 +173,7 @@ class BgfiService
             ])
             ->post($this->baseUrl('api/v1/collect/process'), $payload);
 
-        $this->throwIfFailed($response, 'Collect request failed');
+        $this->assertSuccess($response, 'Collect request failed');
 
         return $response->json();
     }
@@ -181,7 +187,7 @@ class BgfiService
             ])
             ->get($this->baseUrl('api/v1/collect/status/' . $externalRef));
 
-        $this->throwIfFailed($response, 'Collect status request failed');
+        $this->assertSuccess($response, 'Collect status request failed');
 
         return $response->json();
     }
