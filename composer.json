@@ -2,6 +2,18 @@
   "name": "mecxer713/bgfi-payment",
   "description": "Laravel SDK for integrating the BGFI RDC payment gateway",
   "license": "MIT",
+  "homepage": "https://github.com/mecxer713/bgfi-payment",
+  "support": {
+    "issues": "https://github.com/mecxer713/bgfi-payment/issues",
+    "source": "https://github.com/mecxer713/bgfi-payment",
+    "docs": "https://github.com/mecxer713/bgfi-payment#readme"
+  },
+  "funding": [
+    {
+      "type": "github",
+      "url": "https://github.com/sponsors/mecxer713"
+    }
+  ],
   "authors": [
     {
       "name": "Mecxer713",
