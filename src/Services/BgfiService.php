@@ -14,14 +14,14 @@ class BgfiService
     protected array $config;
     protected string $userAgent;
     protected int $tokenTtl;
-    protected bool $verifySsl;
+    protected string|bool $verify;
 
     public function __construct(array $config)
     {
         $this->config = $config;
         $this->userAgent = $config['user_agent'] ?? 'Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.91 Mobile Safari/537.36';
         $this->tokenTtl = (int) ($config['token_ttl'] ?? 3500);
-        $this->verifySsl = (bool) ($config['verify_ssl'] ?? true);
+        $this->verify = $this->resolveVerifyOption($config);
 
         $this->guardConfig();
     }
@@ -41,12 +41,46 @@ class BgfiService
             'Accept' => 'application/json',
             'Content-Type' => 'application/json',
             'User-Agent' => $this->userAgent,
-        ])->withOptions(['verify' => $this->verifySsl]);
+        ])->withOptions(['verify' => $this->verify]);
     }
 
     protected function baseUrl(string $path = ''): string
     {
         return rtrim($this->config['base_url'], '/') . '/' . ltrim($path, '/');
+    }
+
+    protected function resolveVerifyOption(array $config): string|bool
+    {
+        $verify = $config['verify_ssl'] ?? true;
+
+        if ($verify === false || $verify === 0 || $verify === 'false') {
+            return false;
+        }
+
+        if (!empty($config['ca_path'])) {
+            $path = $this->normalizePath($config['ca_path']);
+
+            if (!file_exists($path)) {
+                throw new InvalidArgumentException("CA bundle not found at {$path}");
+            }
+
+            return $path;
+        }
+
+        return true;
+    }
+
+    protected function normalizePath(string $path): string
+    {
+        $path = trim($path);
+
+        if (function_exists('storage_path') && str_starts_with($path, 'storage')) {
+            $relative = preg_replace('#^storage[\\\\/]?#', '', $path);
+
+            return storage_path($relative);
+        }
+
+        return $path;
     }
 
     protected function throwIfFailed(Response $response, string $context): void

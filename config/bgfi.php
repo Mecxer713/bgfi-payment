@@ -29,6 +29,7 @@ return [
 
     // HTTP client options
     'verify_ssl' => env('BGFI_VERIFY_SSL', true),
+    'ca_path'    => env('BGFI_CA_PATH', 'storage/cert/cacert.pem'),
     'user_agent' => env('BGFI_USER_AGENT', 'Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.91 Mobile Safari/537.36'),
     'token_ttl'  => env('BGFI_TOKEN_TTL', 3500),
 

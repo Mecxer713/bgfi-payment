@@ -23,10 +23,13 @@ Fill your `.env` with the credentials provided by BGFI:
 | `BGFI_CURRENCY` | Default currency (e.g. `CDF`). |
 | `BGFI_CALLBACK_PATH` | Path for the webhook route (`api/bgfi/callback` by default). |
 | `BGFI_REGISTER_CALLBACK_ROUTE` | Set to `false` if you want to register the webhook route yourself. |
+| `BGFI_CA_PATH` | Path to the CA bundle used for SSL (default `storage/cert/cacert.pem`). |
 | `BGFI_VERIFY_SSL` | Set to `false` only in UAT if the certificate is self-signed. |
 | `BGFI_TOKEN_TTL` | Token cache lifetime in seconds (default: `3500`). |
 
 Optional config keys live in `config/bgfi.php`: `default_description`, `return_url`, `user_agent`, `register_callback_route`.
+
+SSL note: place your CA file at `storage/cert/cacert.pem` (or point `BGFI_CA_PATH` to a custom absolute path). For quick sandboxing you can set `BGFI_VERIFY_SSL=false`, but re-enable it in production.
 
 ## Usage
 Import the facade or inject the `Mecxer713\BgfiPayment\Services\BgfiService`.
