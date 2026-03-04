@@ -3,6 +3,7 @@
 namespace Mecxer713\BgfiPayment;
 
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Support\Facades\Cache;
 use Mecxer713\BgfiPayment\Services\BgfiService;
 use Mecxer713\BgfiPayment\Console\TestPaymentCommand;
 
@@ -13,7 +14,10 @@ class BgfiPaymentServiceProvider extends ServiceProvider
         $this->mergeConfigFrom(__DIR__.'/../config/bgfi.php', 'bgfi');
 
         $this->app->singleton(BgfiService::class, function ($app) {
-            return new BgfiService($app['config']->get('bgfi'));
+            $config = $app['config']->get('bgfi');
+            $cache = Cache::store(); // Repository implements Psr\SimpleCache\CacheInterface
+
+            return new BgfiService($config, null, $cache);
         });
 
         // Facade alias

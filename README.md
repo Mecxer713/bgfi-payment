@@ -1,90 +1,118 @@
-# BGFI Payment RDC - Laravel SDK
+# BGFI Payment RDC - PHP SDK (Laravel & Symfony)
 
-A lightweight Laravel package to integrate BGFI Bank RDC (Omnitech) payment and deposit services: OAuth token generation, account verification, mobile money deposit/collect, webhook handling, and quick console checks.
+SDK unique pour consommer les APIs BGFI RDC (Omnitech) côté Laravel (provider + facade) et Symfony (bundle auto-wirable) : vérification de compte, dépôt Rakakash, collecte mobile money et suivi de transaction.
 
-## Requirements
+## Prérequis
 - PHP 8.1+
-- Laravel 10, 11 or 12
+- Composer
+- Framework: Laravel 10/11/12 ou Symfony 7.x
 
-## Installation
+## Installation Laravel
 ```bash
 composer require mecxer713/bgfi-payment
 php artisan vendor:publish --tag=bgfi-config
 ```
+`.env` minimum :
+```dotenv
+BGFI_BASE_URL=https://api-uat.bgfi.com
+BGFI_LOGIN=mon_login
+BGFI_PASSWORD=mon_password
+BGFI_CONSUMER_ID=xxxx
+BGFI_CONSUMER_SECRET=xxxx
+BGFI_CURRENCY=CDF
+```
 
-## Configuration
-Fill your `.env` with the credentials provided by BGFI:
-
-| Key | Description |
-| --- | --- |
-| `BGFI_BASE_URL` | API base URL (UAT or production). |
-| `BGFI_LOGIN` / `BGFI_PASSWORD` | Credentials used for the OAuth token call. |
-| `BGFI_CONSUMER_ID` / `BGFI_CONSUMER_SECRET` | Consumer pair provided by BGFI. |
-| `BGFI_CURRENCY` | Default currency (e.g. `CDF`). |
-| `BGFI_CALLBACK_PATH` | Path for the webhook route (`api/bgfi/callback` by default). |
-| `BGFI_REGISTER_CALLBACK_ROUTE` | Set to `false` if you want to register the webhook route yourself. |
-| `BGFI_CA_PATH` | Path to the CA bundle used for SSL (default `storage/cert/cacert.pem`). |
-| `BGFI_VERIFY_SSL` | Set to `false` only in UAT if the certificate is self-signed. |
-| `BGFI_TOKEN_TTL` | Token cache lifetime in seconds (default: `3500`). |
-
-Optional config keys live in `config/bgfi.php`: `default_description`, `return_url`, `user_agent`, `register_callback_route`.
-
-SSL note: place your CA file at `storage/cert/cacert.pem` (or point `BGFI_CA_PATH` to a custom absolute path). For quick sandboxing you can set `BGFI_VERIFY_SSL=false`, but re-enable it in production.
-
-## Usage
-Import the facade or inject the `Mecxer713\BgfiPayment\Services\BgfiService`.
-
+## Installation Symfony
+```bash
+composer require mecxer713/bgfi-payment
+```
+Activer le bundle (`config/bundles.php`) :
 ```php
+return [
+    // ...
+    Mecxer713\BgfiPayment\Symfony\BgfiPaymentBundle::class => ['all' => true],
+];
+```
+Configuration (`config/packages/bgfi_payment.yaml`) :
+```yaml
+bgfi_payment:
+  base_url: https://api-uat.bgfi.com
+  login: mon_login
+  password: mon_password
+  consumer_id: xxxx
+  consumer_secret: xxxx
+  currency: CDF
+```
+
+## Configuration avancée (commune)
+| Clé | Description |
+| --- | --- |
+| `base_url` | URL API BGFI (UAT ou prod). |
+| `login` / `password` | Identifiants OAuth. |
+| `consumer_id` / `consumer_secret` | Couple fourni par BGFI. |
+| `currency` | Devise par défaut (`CDF`…). |
+| `default_description` | Description par défaut des collectes. |
+| `return_url` | URL de retour client après paiement. |
+| `verify_ssl` | `true` en prod, `false` possible en UAT. |
+| `ca_path` | Chemin vers le bundle CA si certif custom. |
+| `token_ttl` | Durée de cache du token en secondes (3500). |
+| Laravel seul | `callback_path`, `register_callback_route` pour le webhook auto. |
+
+## Utilisation
+Laravel : importer le facade. Symfony : auto-wirer le service.
+```php
+// Laravel
 use Mecxer713\BgfiPayment\Facades\BgfiPayment;
 
-// Account verification
-$response = BgfiPayment::checkAccount('243820460800');
-
-// Deposit to a Rakakash account
-$response = BgfiPayment::deposit('243998760311', 10000, 'CDF');
-
-// Initiate a mobile money collection
-$response = BgfiPayment::collect([
-    'amount'    => 25000,
-    'phone'     => '243820460800',
-    'reference' => 'ORDER-2026-0001',
-    'currency'  => 'CDF',
-    'return_url'=> 'https://your-app.test/payment/return',
-]);
-
-// Check collection status
-$status = BgfiPayment::getCollectStatus('ORDER-2026-0001');
+// Symfony
+use Mecxer713\BgfiPayment\Services\BgfiService;
+// $bgfi = $container->get(BgfiService::class);
 ```
+
+- `checkAccount(string $account, string $type = 'RAKAKASH', array $bankDetails = [])`  
+  Vérifie l'existence d'un compte.  
+  ```php
+  $response = BgfiPayment::checkAccount('243820460800');          // Laravel
+  // $response = $bgfi->checkAccount('243820460800');             // Symfony
+  ```
+
+- `deposit(string $phone, float $amount, ?string $currency = null)`  
+  Dépôt Rakakash.  
+  ```php
+  $response = BgfiPayment::deposit('243998760311', 10000, 'CDF');
+  // $response = $bgfi->deposit('243998760311', 10000, 'CDF');
+  ```
+
+- `collect(array $data)`  
+  Collecte mobile money (`amount`, `phone`, `reference`, `currency`, `return_url` optionnel).  
+  ```php
+  $response = BgfiPayment::collect([
+      'amount'    => 25000,
+      'phone'     => '243820460800',
+      'reference' => 'ORDER-2026-0001',
+      'currency'  => 'CDF',
+      'return_url'=> 'https://votre-app.test/paiement/retour',
+  ]);
+  // $response = $bgfi->collect([...]);
+  ```
+
+- `getCollectStatus(string $externalRef)`  
+  Statut d'une collecte existante.  
+  ```php
+  $status = BgfiPayment::getCollectStatus('ORDER-2026-0001');
+  // $status = $bgfi->getCollectStatus('ORDER-2026-0001');
+  ```
 
 ## Webhook / Callback
-- By default a POST route is registered at `/api/bgfi/callback`.
-- Each call dispatches the `Mecxer713\BgfiPayment\Events\BgfiCallbackReceived` event.
-- Add a listener to process status updates:
+- Laravel : route POST auto `/{callback_path}` (par défaut `api/bgfi/callback`). Désactiver via `BGFI_REGISTER_CALLBACK_ROUTE=false`. L'événement `Mecxer713\BgfiPayment\Events\BgfiCallbackReceived` est dispatché.
+- Symfony : exposez votre propre contrôleur qui appelle `BgfiService` ou relaie l'événement selon vos besoins.
 
-```php
-use Mecxer713\BgfiPayment\Events\BgfiCallbackReceived;
-
-class BgfiPaymentHandler
-{
-    public function handle(BgfiCallbackReceived $event): void
-    {
-        // $event->payload contains the raw callback data
-    }
-}
-```
-
-If you prefer to register the route yourself, set `BGFI_REGISTER_CALLBACK_ROUTE=false` and define your own endpoint that dispatches the event.
-
-## CLI Smoke Test
-Run a quick check against your sandbox credentials:
+## Vérification rapide (Laravel)
 ```bash
 php artisan bgfi:test
 ```
 
-## Testing
+## Tests
 ```bash
 composer test
 ```
-
-## License
-MIT

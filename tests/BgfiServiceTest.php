@@ -2,23 +2,26 @@
 
 namespace Mecxer713\BgfiPayment\Tests;
 
-use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Http;
-use Mecxer713\BgfiPayment\BgfiPaymentServiceProvider;
+use GuzzleHttp\Client;
+use GuzzleHttp\Handler\MockHandler;
+use GuzzleHttp\HandlerStack;
+use GuzzleHttp\Psr7\Response;
+use Mecxer713\BgfiPayment\Exceptions\BgfiApiException;
 use Mecxer713\BgfiPayment\Services\BgfiService;
-use Orchestra\Testbench\TestCase;
+use Mecxer713\BgfiPayment\Support\Cache\ArrayCache;
+use PHPUnit\Framework\TestCase;
 
 class BgfiServiceTest extends TestCase
 {
-    protected function getPackageProviders($app)
-    {
-        return [BgfiPaymentServiceProvider::class];
-    }
-
-    protected function getEnvironmentSetUp($app)
-    {
-        $app['config']->set('cache.default', 'array');
-    }
+    private array $baseConfig = [
+        'base_url'        => 'https://example.test',
+        'consumer_id'     => 'id',
+        'consumer_secret' => 'secret',
+        'login'           => 'login',
+        'password'        => 'pass',
+        'currency'        => 'CDF',
+        'token_ttl'       => 1,
+    ];
 
     public function test_it_throws_when_config_is_missing_required_keys(): void
     {
@@ -29,22 +32,16 @@ class BgfiServiceTest extends TestCase
 
     public function test_collect_uses_token_and_returns_payload(): void
     {
-        Cache::flush();
-
-        $service = new BgfiService([
-            'base_url'        => 'https://example.test',
-            'consumer_id'     => 'id',
-            'consumer_secret' => 'secret',
-            'login'           => 'login',
-            'password'        => 'pass',
-            'currency'        => 'CDF',
-            'token_ttl'       => 1,
+        $mock = new MockHandler([
+            new Response(200, [], json_encode(['token' => 'abc'])),
+            new Response(200, [], json_encode(['status' => 'ok'])),
         ]);
 
-        Http::fake([
-            'https://example.test/api/rakakash/oauth' => Http::response(['token' => 'abc'], 200),
-            'https://example.test/api/v1/collect/process' => Http::response(['status' => 'ok'], 200),
-        ]);
+        $service = new BgfiService(
+            $this->baseConfig,
+            new Client(['handler' => HandlerStack::create($mock)]),
+            new ArrayCache()
+        );
 
         $response = $service->collect([
             'amount'    => 1000,
@@ -57,19 +54,17 @@ class BgfiServiceTest extends TestCase
 
     public function test_it_throws_on_bgfi_error_code_even_with_http_200(): void
     {
-        $service = new BgfiService([
-            'base_url'        => 'https://example.test',
-            'consumer_id'     => 'id',
-            'consumer_secret' => 'secret',
-            'login'           => 'login',
-            'password'        => 'pass',
+        $mock = new MockHandler([
+            new Response(200, [], json_encode(['code' => 4008, 'message' => 'Application Corrompue'])),
         ]);
 
-        Http::fake([
-            'https://example.test/api/rakakash/oauth' => Http::response(['code' => 4008, 'message' => 'Application Corrompue'], 200),
-        ]);
+        $service = new BgfiService(
+            $this->baseConfig,
+            new Client(['handler' => HandlerStack::create($mock)]),
+            new ArrayCache()
+        );
 
-        $this->expectException(\Mecxer713\BgfiPayment\Exceptions\BgfiApiException::class);
+        $this->expectException(BgfiApiException::class);
         $this->expectExceptionMessage('Application Corrompue');
 
         $service->getToken();
