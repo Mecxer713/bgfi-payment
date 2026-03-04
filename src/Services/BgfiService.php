@@ -2,12 +2,14 @@
 
 namespace Mecxer713\BgfiPayment\Services;
 
-use Illuminate\Http\Client\PendingRequest;
-use Illuminate\Http\Client\Response;
-use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Http;
+use GuzzleHttp\Client;
+use GuzzleHttp\ClientInterface;
+use GuzzleHttp\Exception\GuzzleException;
 use InvalidArgumentException;
 use Mecxer713\BgfiPayment\Exceptions\BgfiApiException;
+use Mecxer713\BgfiPayment\Support\Cache\ArrayCache;
+use Psr\Http\Message\ResponseInterface;
+use Psr\SimpleCache\CacheInterface;
 
 class BgfiService
 {
@@ -15,8 +17,10 @@ class BgfiService
     protected string $userAgent;
     protected int $tokenTtl;
     protected string|bool $verify;
+    protected ClientInterface $http;
+    protected CacheInterface $cache;
 
-    public function __construct(array $config)
+    public function __construct(array $config, ?ClientInterface $httpClient = null, ?CacheInterface $cache = null)
     {
         $this->config = $config;
         $this->userAgent = $config['user_agent'] ?? 'Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.91 Mobile Safari/537.36';
@@ -24,6 +28,9 @@ class BgfiService
         $this->verify = $this->resolveVerifyOption($config);
 
         $this->guardConfig();
+
+        $this->http = $httpClient ?? $this->buildHttpClient();
+        $this->cache = $cache ?? new ArrayCache();
     }
 
     protected function guardConfig(): void
@@ -35,13 +42,20 @@ class BgfiService
         }
     }
 
-    protected function client(): PendingRequest
+    protected function buildHttpClient(): ClientInterface
     {
-        return Http::withHeaders([
-            'Accept' => 'application/json',
-            'Content-Type' => 'application/json',
-            'User-Agent' => $this->userAgent,
-        ])->withOptions(['verify' => $this->verify]);
+        return new Client([
+            'headers' => [
+                'Accept'           => 'application/json',
+                'Content-Type'     => 'application/json',
+                // Empreinte mobile utilisee par le client officiel
+                'User-Agent'       => $this->userAgent ?: 'Dalvik/2.1.0 (Linux; U; Android 11; Pixel 5 Build/RQ3A.210605.005)',
+                'X-Requested-With' => 'com.omnitech.rakakash',
+                'Connection'       => 'Keep-Alive',
+            ],
+            'verify'  => $this->verify,
+            'timeout' => 60,
+        ]);
     }
 
     protected function baseUrl(string $path = ''): string
@@ -83,43 +97,86 @@ class BgfiService
         return $path;
     }
 
-    protected function assertSuccess(Response $response, string $context): void
+    protected function send(string $method, string $path, array $options = []): array
     {
-        if ($response->failed()) {
-            throw new BgfiApiException($context . " (status {$response->status()}): " . $response->body());
+        try {
+            $response = $this->http->request($method, $this->baseUrl($path), $options);
+        } catch (GuzzleException $e) {
+            throw new BgfiApiException("HTTP error during {$method} {$path}: " . $e->getMessage(), $e->getCode());
         }
 
-        $code = $response->json('code');
-        $message = $response->json('message');
+        $data = $this->decode($response);
+        $this->assertSuccess($response, $data, "{$method} {$path}");
+
+        return $data;
+    }
+
+    protected function decode(ResponseInterface $response): array
+    {
+        $json = (string) $response->getBody();
+        $data = json_decode($json, true);
+
+        return is_array($data) ? $data : [];
+    }
+
+    protected function assertSuccess(ResponseInterface $response, array $data, string $context): void
+    {
+        $status = $response->getStatusCode();
+        $body = (string) $response->getBody();
+
+        if ($status >= 400) {
+            throw new BgfiApiException($context . " (status {$status}): " . $body);
+        }
+
+        $code = $data['code'] ?? null;
+        $message = $data['message'] ?? null;
 
         // BGFI sometimes returns HTTP 200 with error codes (e.g., 4008)
         if ($code !== null && (int) $code !== 2000) {
-            throw new BgfiApiException($context . " (code {$code}): " . ($message ?? $response->body()));
+            throw new BgfiApiException($context . " (code {$code}): " . ($message ?? $body));
         }
+    }
+
+    protected function authHeaders(): array
+    {
+        return [
+            'Authorization' => 'Bearer ' . $this->getToken(),
+        ];
     }
 
     public function getToken(): string
     {
         $cacheKey = 'bgfi_token_' . md5($this->config['consumer_id']);
+        $cached = $this->cache->get($cacheKey);
 
-        return Cache::remember($cacheKey, $this->tokenTtl, function () {
-            $response = $this->client()
-                ->withBasicAuth($this->config['login'], $this->config['password'])
-                ->post($this->baseUrl('api/rakakash/oauth'), [
+        if ($cached) {
+            return $cached;
+        }
+
+        try {
+            $response = $this->http->request('POST', $this->baseUrl('api/rakakash/oauth'), [
+                'auth' => [$this->config['login'], $this->config['password']],
+                'json' => [
                     'consumerid'     => $this->config['consumer_id'],
                     'consumersecret' => $this->config['consumer_secret'],
-                ]);
+                ],
+            ]);
+        } catch (GuzzleException $e) {
+            throw BgfiApiException::authFailed($e->getMessage(), $e->getCode());
+        }
 
-            $this->assertSuccess($response, 'Authentication failed');
+        $data = $this->decode($response);
+        $this->assertSuccess($response, $data, 'Authentication failed');
 
-            $token = $response->json('token') ?? $response->json('access_token');
-            
-            if (!$token) {
-                throw BgfiApiException::authFailed('Token not present in response', $response->status());
-            }
+        $token = $data['token'] ?? $data['access_token'] ?? null;
 
-            return $token;
-        });
+        if (!$token) {
+            throw BgfiApiException::authFailed('Token not present in response', $response->getStatusCode());
+        }
+
+        $this->cache->set($cacheKey, $token, $this->tokenTtl);
+
+        return $token;
     }
 
     public function checkAccount(string $account, string $type = 'RAKAKASH', array $bankDetails = []): array
@@ -129,28 +186,28 @@ class BgfiService
             'account' => $account,
         ], $bankDetails);
 
-        $response = $this->client()
-            ->withToken($this->getToken())
-            ->post($this->baseUrl('api/rakakash/checkaccount'), $payload);
+        $responseData = $this->send('POST', 'api/rakakash/checkaccount', [
+            'headers' => $this->authHeaders(),
+            'json'    => $payload,
+        ]);
 
-        $this->assertSuccess($response, 'Account verification failed');
+        if (isset($responseData['code']) && $responseData['code'] == 4008) {
+            throw new \Exception("Securite Omnitech (4008) : Empreinte de requete refusee.");
+        }
 
-        return $response->json();
+        return $responseData;
     }
 
     public function deposit(string $phone, float $amount, ?string $currency = null): array
     {
-        $response = $this->client()
-            ->withToken($this->getToken())
-            ->post($this->baseUrl('api/rakakash/deposit/rakakash'), [
+        return $this->send('POST', 'api/rakakash/deposit/rakakash', [
+            'headers' => $this->authHeaders(),
+            'json'    => [
                 'compterakakash_destinataire' => $phone,
                 'devise'                      => $currency ?? $this->config['currency'] ?? 'CDF',
                 'montant'                     => $amount,
-            ]);
-
-        $this->assertSuccess($response, 'Deposit request failed');
-
-        return $response->json();
+            ],
+        ]);
     }
 
     public function collect(array $data): array
@@ -166,29 +223,20 @@ class BgfiService
 
         $payload = array_filter($payload, fn($value) => !is_null($value));
 
-        $response = $this->client()
-            ->withToken($this->getToken())
-            ->withHeaders([
+        return $this->send('POST', 'api/v1/collect/process', [
+            'headers' => array_merge($this->authHeaders(), [
                 'X-Consumer-ID' => $this->config['consumer_id'],
-            ])
-            ->post($this->baseUrl('api/v1/collect/process'), $payload);
-
-        $this->assertSuccess($response, 'Collect request failed');
-
-        return $response->json();
+            ]),
+            'json' => $payload,
+        ]);
     }
 
     public function getCollectStatus(string $externalRef): array
     {
-        $response = $this->client()
-            ->withToken($this->getToken())
-            ->withHeaders([
+        return $this->send('GET', 'api/v1/collect/status/' . $externalRef, [
+            'headers' => array_merge($this->authHeaders(), [
                 'X-Consumer-ID' => $this->config['consumer_id'],
-            ])
-            ->get($this->baseUrl('api/v1/collect/status/' . $externalRef));
-
-        $this->assertSuccess($response, 'Collect status request failed');
-
-        return $response->json();
+            ]),
+        ]);
     }
 }
