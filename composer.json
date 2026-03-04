@@ -1,6 +1,6 @@
 {
   "name": "mecxer713/bgfi-payment",
-  "description": "Laravel SDK for integrating the BGFI RDC payment gateway",
+  "description": "PHP SDK (Laravel & Symfony) for integrating the BGFI RDC payment gateway",
   "license": "MIT",
   "homepage": "https://github.com/mecxer713/bgfi-payment",
   "support": {
@@ -58,8 +58,20 @@
     "omnitech",
     "payment",
     "laravel",
+    "symfony",
     "rdc"
   ],
+  "archive": {
+    "exclude": [
+      "/tests",
+      "/vendor",
+      "/.env",
+      "/.env.example",
+      "/phpunit.xml.dist",
+      "/.phpunit.result.cache",
+      "/composer.lock"
+    ]
+  },
   "scripts": {
     "test": "phpunit"
   },
